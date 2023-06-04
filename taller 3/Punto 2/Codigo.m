@@ -1,0 +1,190 @@
+
+% Taller 3, Punto 2
+% Integrantes:
+% Nicolas Akerman - 201423015
+% Andrés Chaparro - 201813157
+% Edward Gómez - 202020028
+% Jesús Cepeda - 201910058
+% Sebastián Cifuentes - 201817089
+% Sergio Pinila - 201814755
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% 2.A
+%clc;
+%clear all;
+
+%ds = readtable('BRENT.csv','VariableNamingRule','preserve');
+%ds = table(transpose(1990+5/12:1/12:2022+3/12),ds.("Último"),'VariableNames',{'Fecha','Brent'});
+
+%% i Modelo utilizado: ARIMA (5,0,4) - GARCH (1,2)
+rBrent = (log(ds.Brent(2:end))-log(ds.Brent(1:end-1)))*100;
+[rBrent1,lower,upper,center] = filloutliers(rBrent,'clip','median');
+
+X =find(ds{:,1}==2010);
+
+info=rBrent1(1:X);
+
+figure (1)
+
+subplot(1,2,1)
+autocorr(info)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF')
+
+subplot(1,2,2)
+parcorr(info)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF')
+
+
+ %[LLM,AICM,BICM]=model_election(info);
+
+% AIC [2,5,0,2] / BIC [0,1,1,3] / Log LikeLihood [5,4,4,4]
+
+%%
+
+%opts=optimset('fmincon')
+%opts.Algorithm='interior-point'
+
+
+%Mdl = arima('MALags',[1:2],'SARLags',[1:3]*3,'SMALags',[1:2]*6); %LL
+%Mdl = arima('ARLags',[1:1],'D',0,'MALags',[1:2],'SARLags',[1:3]*3,  'SMALags',[1:3]*3); %LL
+%Mdl =  arima('D',0,'MALags',[1:1], 'SMALags', 11, 'SARLags', 11)
+Mdl=arima(0,0,1)
+CondVarMdl =  garch(0,1);
+Mdl.Variance = CondVarMdl;
+
+[EstMdl_GARCH,~,~] = estimate(Mdl,rBrent1(1:X));
+%[EstMdl_GARCH,~,~] = estimate(Mdl,rBrent(1:X),'options',opts);
+
+[res_m, var_m] = infer(EstMdl_GARCH,rBrent1(1:X));
+%%
+
+res_m2=res_m.^2;
+figure (2)
+
+subplot(2,2,1)
+autocorr(res_m)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF')
+
+subplot(2,2,2)
+parcorr(res_m)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF')
+
+subplot(2,2,3)
+autocorr(res_m2)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF')
+
+subplot(2,2,4)
+parcorr(res_m2)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF')
+[H1, pValue1, W1] = swtest(res_m)
+
+
+R1 = {'5 Rezagos';'10 Rezagos'; '15 Rezagos'};
+
+[QSIC,P_ValueSIC,EstadisticoSIC,Valor_CriticoSIC] = lbqtest(res_m,'lags',[5,10,15])
+
+
+P_ValueSIC=[P_ValueSIC]';
+EstadisticoSIC=[EstadisticoSIC]';
+Valor_CriticoSIC=[Valor_CriticoSIC]';
+
+Estadistico_Q1=table(P_ValueSIC,EstadisticoSIC,Valor_CriticoSIC,'RowNames',R1)
+
+%% ii y iii
+
+f1=[];
+
+
+for i=0:(height(ds)-X-1)   
+%Estimación Modelo 1
+[EstMdl_GARCH,~,~] = estimate(Mdl,rBrent1(1:X+i))
+[res, var] = infer(EstMdl_GARCH,rBrent1(1:X+i));
+[TDf1,VAR_C,~] = forecast(EstMdl_GARCH,1,'Y0',rBrent1(1:X+i),'V0',var, 'E0', res);
+f1(i+1,1)=TDf1;
+f1(i+1,2)=VAR_C;
+
+end
+%%
+
+fc=table2array(ds);
+fc(:,3)=vertcat(rBrent(1:X),f1(:,1));
+fc(:,4)=vertcat(NaN(X,1),f1(:,2));
+
+%%
+LIC95 = f1(:,1) - 1.96*sqrt(f1(:,2));
+HIC95 = f1(:,1) + 1.96*sqrt(f1(:,2));
+
+%%
+
+figure (3)
+
+plot(fc(X-9:end,1),rBrent(X-10:end),'Color',[.7,.7,.7])
+hold on
+plot(fc(X:end,1),fc(X:end,3),'k','LineWidth',.7)
+hold on
+plot(fc(X+1:end,1),LIC95,'r','LineWidth',.7)
+hold on
+plot(fc(X+1:end,1),HIC95,'r','LineWidth',.7)
+ylabel('%')
+xlabel('Fecha')
+hold off
+legend('Rendimientos Petroleo', 'Pronóstico t=1', 'IC 95%','location','southwest')
+title('Rendimientos Petroleo')
+
+%%
+U_Theil=[NaN;rBrent(1:end-1)];
+
+res_U=rBrent-U_Theil;
+
+%% Estandares absolutos
+%errores media 0
+inter=(repelem(1,236))';
+
+model_res1=fitlm(res_m,inter, 'Intercept',false);
+
+%%
+res_pronostico= rBrent(X:end)-f1(:,1);
+inter1=(repelem(1,147))';
+model_res2=fitlm(res_pronostico,inter1,'Intercept',false);
+
+%%
+figure (4)
+
+subplot(1,2,1)
+autocorr(res_pronostico)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF')
+
+subplot(1,2,2)
+parcorr(res_pronostico)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF')
+
+
+%%
+
+[Q2,P_2,Estadistico2,Valor_Critico2] = lbqtest(res_pronostico,'lags',[5,10,15,20])
+
+
+P_2=[P_2]';
+Estadistico2=[Estadistico2]';
+Valor_Critico2=[Valor_Critico2]';
+
+Estadistico_Q2=table(P_2,Estadistico2,Valor_Critico2, 'Rownames', ["5","10","15","20"])
+
+%%
+model_res1=fitlm(rBrent(X:end),f1(:,1))

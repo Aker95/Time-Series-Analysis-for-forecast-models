@@ -1,0 +1,421 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Taller 1, Punto 2
+% Integrantes:
+% Nicolas Akerman - 201423015
+% Andrés Chaparro - 201813157
+% Edward Gómez - 202020028
+% Jesús Cepeda - 201910058
+% Sebastián Cifuentes - 201817089
+% Sergio Pinila - 201814755
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Punto 2
+% Preparar el ambiente
+clc;
+clear all;
+
+ds = readtable('BRENT.csv','VariableNamingRule','preserve');
+ds = table(transpose(1990+5/12:1/12:2022+3/12),ds.("Último"),'VariableNames',{'Fecha','Brent'});
+X =find(ds{:,1}==2010)-1;
+ds= ds(1:X,:);
+
+%% Punto 2.1
+% Grafica historica del Brent
+
+figure
+plot(ds.Fecha,ds.Brent)
+title('Precio Mensual BRENT (USD)')
+xlabel('Fecha')
+ylabel('Precio USD')
+
+%% Punto 2.2
+% Calculando el retorno del BRENT
+rBrent = (log(ds.Brent(2:end))-log(ds.Brent(1:end-1)))*100;
+[rBrent,lower,upper,center] = filloutliers(rBrent,'clip','median')
+r_barra = mean(rBrent);
+display(r_barra)
+
+%% Punto 2.3
+% Varianza del rendimiento y graficos del rendimiento
+
+rBrent2 = (rBrent(1:end)-r_barra).^2;
+
+figure
+
+subplot(2,1,1)
+plot(ds.Fecha(2:end),rBrent)
+%title('Rendimiento Mensual BRENT (pp)')
+xlabel('Fecha')
+ylabel('Retorno (r_t)')
+
+subplot(2,1,2)
+plot(ds.Fecha(2:end),rBrent2)
+%title('Var. Rendimiento Mensual BRENT (pp^2)')
+xlabel('Fecha')
+ylabel('Var. Retorno (r_t^2)')
+
+%% Punto 2.4
+% Construyendo el modelo
+
+%% Punto 2.4.a
+% Escoger el modelo
+
+% Revisando ACF y PACF
+
+% ACF: Sinusoidal, clara significancia del primer rezago, 
+% el cuarto rezago es significativo a pesar de que ni el segundo ni tercero
+% lo son, de ahi ya no sale de las bandas de contingencia
+
+subplot(1,2,1)
+autocorr(rBrent)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF r Brent') 
+
+% PACF: Sinusoidal, clara significancia del primer rezago, 
+% el cuarto rezago es significativo a pesar de que ni el segundo ni tercero
+% lo son, de ahi ya no sale de las bandas de contingencia
+
+subplot(1,2,2)
+parcorr(rBrent)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF r Brent') 
+
+% No hay necesidad visible de diferenciar, I(0)
+
+% Seleccionando P y Q para el ARMA
+
+AR=6;
+MA=6;
+LL=NaN(AR+2,MA+2);
+NBetas=NaN(AR+2,MA+2);
+Varianzas=NaN(AR+2,MA+2);
+X  = dummyvar(repmat((1:12)',12,1));
+
+% Format the presample X matrix
+X0 = [zeros(1,11) 1; dummyvar((1:12)')];
+
+
+for i=0:AR
+LL(i+2,1)=i;
+NBetas(i+2,1)=i;
+Varianzas(i+2,1)=i;
+    for j=0:MA   
+LL(1,j+2)=j
+NBetas(1,j+2)=j
+Varianzas(1,j+2)=j
+Mdl = arima(i,0,j);
+[EstMdl,~,rB] = estimate(Mdl,rBrent);
+param=i+j+1;
+NBetas(i+2,j+2)=param;
+LL(i+2,j+2)=rB;
+Varianzas(i+2,j+2)=EstMdl.Variance;
+    end
+end
+
+NBetas(2,2)=1;
+C=size(NBetas,2);
+T=length(rBrent((~isnan(rBrent))))
+AIK=[];
+SIC=[];
+for i=2:C
+   [aic,BIC] = aicbic(LL(2:end,i),NBetas(2:end,i),T) 
+   AIK(:,i-1)=aic
+   SIC(:,i-1)=BIC
+end
+
+AIK; % Tabla AIC
+SIC; % Tabla BIC
+LL; % Tabla LL
+Varianzas; % Tabla Varianzas
+
+
+% AIC: ARIMA (4,0,4)
+% SIC: ARIMA (0,0,1)
+% LL:  ARIMA (4,0,4)
+% Varianzas: ARIMA (4,0,4)
+
+% Se prefiere el ARIMA (4,0,4)
+%%
+
+CAIK=NBetas;
+CSIC=NBetas;
+
+CAIK(2:end,2:end)=AIK;
+CSIC(2:end,2:end)=SIC;
+
+MinAIK=min(CAIK(2:end,2:end),[],'all');
+MinSIC=min(CSIC(2:end,2:end),[],'all');
+
+[AR_AIC,MA_AIC]=find(CAIK(2:end,2:end)==MinAIK);
+[AR_SIC,MA_SIC]=find(CSIC(2:end,2:end)==MinSIC);
+
+ARMAAIC=[AR_AIC-1 MA_AIC-1];
+ARMASIC=[AR_SIC-1 MA_SIC-1];
+
+CAIK=NBetas;
+CSIC=NBetas;
+
+CAIK(2:end,2:end)=AIK;
+CSIC(2:end,2:end)=SIC;
+
+[AR_AIC,MA_AIC]=find(CAIK(2:end,2:end)==MinAIK);
+[AR_SIC,MA_SIC]=find(CSIC(2:end,2:end)==MinSIC);
+
+ARMAAIC=[AR_AIC-1 MA_AIC-1];
+ARMASIC=[AR_SIC-1 MA_SIC-1];
+%%
+
+MdlAIK = arima('ARLags',[1,2,3,4],'D',0,'MALags',[1,2,3,4], 'SMALags',12)
+%MdlAIK = arima(4,0,4)
+[EstMdl,~,rB] = estimate(MdlAIK,rBrent);
+
+
+% Punto 2.4.b
+% Residuales
+
+[res_AIK,var_AIK,~] = infer(EstMdl,rBrent);
+
+rAIK_barra = mean(res_AIK);
+display(rAIK_barra) % Media cercana a cero
+
+MeanRMdl = fitlm(ones(1,234),res_AIK,"constant");
+display(MeanRMdl.Coefficients) % Media no distinta de cero
+
+
+% Gráfico serie e histograma
+figure
+
+subplot(2,1,1)
+plot(ds.Fecha(2:end),res_AIK)
+title('Residuales Modelo ARIMA (4,0,4)')
+xlabel('Fecha')
+ylabel('Residuales (pp)') % Aparenta ruido blanco
+
+subplot(2,1,2)
+histfit(res_AIK)
+ylabel('PDF')
+xlabel('pp')
+title('Histograma') % Aparenta normalidad, toca revisar outliers
+
+
+% Correlación serial residuales
+figure
+
+subplot(1,2,1)
+autocorr(res_AIK)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF') % No hay correlacion serial entre los errores
+
+subplot(1,2,2)
+parcorr(res_AIK)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF') % No hay correlacion serial entre los errores
+
+[q1,P_Value1,Estadistico1,Valor_Critico1] = lbqtest(res_AIK,'lags',[4,5,10,15,20]);
+P_Value1=[P_Value1]';
+Estadistico1=[Estadistico1]';
+Valor_Critico1=[Valor_Critico1]';
+
+R1 = {'4 Rezagos','5 Rezagos','10 Rezagos','15 Rezagos','20 Rezagos'};
+EstadisticoQ_1=table(P_Value1,Estadistico1,Valor_Critico1,'RowNames',R1);
+display(EstadisticoQ_1) % Errores se comportan como ruido blanco
+
+% Varianza no condicional no dependiente del tiempo
+res_AIK2 = (abs(res_AIK)).^2;
+
+sig_AIK = mean(res_AIK2);
+display(sig_AIK) % Varianza no condicional
+
+VarRMdl = fitlm(ds.Fecha(2:end),res_AIK2);
+display(VarRMdl.Coefficients) % Varianza no condicional no dependiente del tiempo
+
+% Prueba de Shapiro-Wilk (Normalidad)
+[H1, pValue1, W1] = swtest(res_AIK); % H0: Normalidad ; 0 acepta 1 rechaza
+
+%% 2.4.c
+% Dinamicas de varianza
+
+figure(15)
+
+subplot(1,2,1)
+autocorr(res_AIK2)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF res.^2') % Clara significancia del segundo rezago,
+% de ahi ya no sale de las bandas de contingencia
+
+subplot(1,2,2)
+parcorr(res_AIK2)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF res.^2') % Clara significancia del segundo rezago,
+% de ahi ya no sale de las bandas de contingencia
+
+% No hay necesidad visible de diferenciar, I(0)
+
+[q2,P_Value2,Estadistico2,Valor_Critico2] = lbqtest(res_AIK2,'lags',[2,5,10,15,20]);
+P_Value2=[P_Value2]';
+Estadistico2=[Estadistico2]';
+Valor_Critico2=[Valor_Critico2]';
+%%
+R2 = {'2 Rezagos','5 Rezagos','10 Rezagos','15 Rezagos','20 Rezagos'};
+EstadisticoQ_2=table(P_Value2,Estadistico2,Valor_Critico2,'RowNames',R2);
+display(EstadisticoQ_2) % Significancia conjunta de los errores al cuadrado hasta el segundo rezago
+
+% Seleccionando P y Q para el ARIMA(4,0,4)-GARCH
+
+SG2=3;
+EP2=2;
+LL=NaN(SG2+2,EP2+2);
+NBetas=NaN(SG2+2,EP2+2);
+
+for i=0:SG2
+LL(i+2,1)=i;
+NBetas(i+2,1)=i;
+    for j=1:EP2   
+LL(1,j+2)=j
+NBetas(1,j+2)=j
+CondVarMdl = garch(i,j);
+MdlAIK.Variance = CondVarMdl;
+[EstMdlGARCH,~,rB] = estimate(MdlAIK,rBrent);
+param=i+j+1;
+NBetas(i+2,j+2)=param;
+LL(i+2,j+2)=rB;
+    end
+end
+
+NBetas(2,2)=1;
+C=size(NBetas,2);
+T=length(rBrent((~isnan(rBrent))))
+AIK=[];
+SIC=[];
+for i=3:C
+   [aic,BIC] = aicbic(LL(2:end,i),NBetas(2:end,i),T) 
+   AIK(:,i-1)=aic
+   SIC(:,i-1)=BIC
+end
+
+AIK; % Tabla AIC
+SIC; % Tabla BIC
+LL; % Tabla LL
+
+% AIC: GARCH (1,2), pero se podría decir que GARCH(1,1) tiene un AIC igual
+% SIC: GARCH (1,1)
+% LL: GARCH(1,2)
+
+%%
+CondVarMdl = garch(0,1);
+MdlAIK.Variance = CondVarMdl;
+[EstMdl_GARCH,~,rB] = estimate(MdlAIK,rBrent);
+
+%% Punto 2.4.d
+% Nuevas dinamicas de varianza
+
+[res_AIK_GARCH,var_AIK_GARCH,~] = infer(EstMdl_GARCH,rBrent);
+
+res_GARCH = (res_AIK_GARCH)./sqrt(var_AIK_GARCH);
+res_GARCH2 = (res_GARCH).^2;
+
+rGARCH_barra = mean(res_GARCH);
+display(rGARCH_barra) % 
+
+
+%%
+MeanRMdlGARCH = fitlm(ones(1,234),res_GARCH,"constant");
+display(MeanRMdlGARCH.Coefficients) % Media no distinta de cero
+
+figure 
+
+subplot(2,1,1)
+plot(ds.Fecha(2:end),res_GARCH)
+ylabel('Residuales Est.')
+xlabel('Fecha')
+%title('Residuales Modelo ARIMA(4,0,4)-GARCH(1,2)')
+
+subplot(2,1,2)
+qqplot(res_GARCH)
+ylabel('Q Res Norm')
+xlabel('Q Res Mod')
+title('QQ-PLOT Res. Estándarizados')
+
+figure
+
+subplot(2,2,1)
+autocorr(res_GARCH)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF res. est.') % No hay correlacion serial entre los errores
+
+subplot(2,2,2)
+parcorr(res_GARCH)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF res. est.') % No hay correlacion serial entre los errores
+
+subplot(2,2,3)
+autocorr(res_GARCH2)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF res. est.^2') % No hay correlacion serial entre los errores
+
+subplot(2,2,4)
+parcorr(res_GARCH2)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF res. est.^2') % No hay correlacion serial entre los errores
+
+[q3,P_Value3,Estadistico3,Valor_Critico3] = lbqtest(res_GARCH2,'lags',[2,5,10,15,20]);
+P_Value3=[P_Value3]';
+Estadistico3=[Estadistico3]';
+Valor_Critico3=[Valor_Critico3]';
+
+R3 = {'2 Rezagos','5 Rezagos','10 Rezagos','15 Rezagos','20 Rezagos'};
+EstadisticoQ_3=table(P_Value3,Estadistico3,Valor_Critico3,'RowNames',R3);
+display(EstadisticoQ_3) % No significancia conjunta de los errores al cuadrado 
+
+% Normalidad en los residuales
+[H2, pValue2, W2] = swtest(res_GARCH); % H0: Normalidad ; 0 acepta 1 rechaza
+
+%% Punto 2.5
+% Modelo utilizado: ARIMA (4,0,4) - GARCH (1,2)
+
+MdlAIK = arima(6,0,6);
+CondVarMdl = garch(3,1);
+MdlAIK.Variance = CondVarMdl;
+[EstMdl_GARCH,~,rB] = estimate(MdlAIK,rBrent);
+
+%% Punto 2.5.a
+% Pronostico punto para el siguiente mes
+res_AIK_GARCH2 = res_AIK_GARCH.^2;
+
+[rBrent_Apr22,Var_rBrent_Apr22] = forecast(EstMdl_GARCH,1,'Y0',rBrent,'E0',res_AIK_GARCH,'V0',res_AIK_GARCH2);
+display(rBrent_Apr22)
+display(Var_rBrent_Apr22) 
+
+%% Punto 25.b
+% Pronostico intervalo y densidad para el siguiente mes
+
+
+rng(1234)
+rBrent_Sim = simulate(EstMdl_GARCH,1,'NumPaths',1000,'Y0',rBrent,'E0',res_AIK_GARCH,'V0',res_AIK_GARCH2);
+IC95 = quantile(rBrent_Sim, [.025 .975]);
+
+figure 
+histfit(rBrent_Sim)
+hold on
+plot([rBrent_Apr22 rBrent_Apr22],[0 100],'LineWidth',2,'Color',[0 0 0])
+hold on
+plot([IC95(1) IC95(1)],[0 100],'LineWidth',2,'Color',[0.5 0.5 0.6])
+hold on 
+plot([IC95(2) IC95(2)],[0 100],'LineWidth',2,'Color',[0.5 0.5 0.6])
+ylabel('PDF')
+xlabel('Retorno Brent')
+%title('Histograma  Retorno Brent')
+
+ProbRPos = sum(rBrent_Sim>0)/1000;
+ProbRNeg = sum(rBrent_Sim<0)/1000;
+
+

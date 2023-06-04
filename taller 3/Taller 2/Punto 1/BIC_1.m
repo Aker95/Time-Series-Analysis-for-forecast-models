@@ -1,0 +1,391 @@
+clc; clear all;
+
+% (Punto_1)
+% Estimen la primera diferencia del logaritmo natural del ISE y remplacen los 
+% outliers siguiendo el mismo procedimiento que llevaron a cabo en el taller 1.
+
+clc; clear all;   % Limpiando la consola
+datos = readtable("ISE.xlsx", "UseExcel", false); % Importando datos
+datos.FECHA1=datenum(datos.Fecha);
+datos.FECHA=datos.FECHA1;
+datos.Log_ISE=log(datos.ISE); % (Conviertan la serie del ISE a logaritmo natural)
+datos.est1=[NaN(1,1);(datos.Log_ISE(2:end) - datos.Log_ISE(1:end-1))*100];
+
+
+
+
+%%
+%-------------------------------------------------------------------------%
+figure (1)
+
+
+subplot(2,1,1)
+plot(datos.FECHA1, datos.ISE)
+title('Logarimo de diferencia de la Serie mensual del índice seguimiento a la economía (ISE)')
+xlabel('Fecha enero/2005 - noviembre/2021') 
+ylabel('ISE') 
+datetick('x','dd/mm/yyyy');
+
+subplot(2,2,3)
+autocorr(datos.ISE)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF')
+
+subplot(2,2,4)
+parcorr(datos.ISE)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF')
+
+%-------------------------------------------------------------------------%
+figure (2)
+subplot(2,1,1)
+plot(datos.FECHA1, datos.est1)
+title('Logarimo de diferencia de la Serie mensual del índice seguimiento a la economía (ISE)')
+xlabel('Fecha enero/2005 - noviembre/2021') 
+ylabel('ISE') 
+datetick('x','dd/mm/yyyy');
+
+subplot(2,2,3)
+autocorr(datos.est1)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF')
+
+subplot(2,2,4)
+parcorr(datos.est1)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF')
+%%
+
+[datos.new_est,lower,upper,center] = filloutliers(datos.est1,'clip','median')
+
+% Eliminado los datos Outliters
+%IQR = iqr(datos.est1)
+%lowr = prctile(datos.est1,25)-1.5*IQR
+%highr = prctile(datos.est1,75)+1.5*IQR
+%datos.new_est = datos.est1(datos.est1>lowr & datos.est1<highr);
+%datos.FECHA1 = datos.FECHA1(datos.est1>lowr & datos.est1<highr);
+%%
+adftest(datos.new_est)
+%%
+%-------------------------------------------------------------------------%
+figure (3)
+
+subplot(2,1,1) 
+plot(datos.FECHA1,datos.new_est)
+title('Crecimiento del ISE suavizado')
+xlabel('Fecha') 
+ylabel('%') 
+datetick('x','mm/yyyy');
+
+
+subplot(2,2,3)
+autocorr(datos.new_est)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF')
+
+subplot(2,2,4)
+parcorr(datos.new_est)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF')
+
+
+[h1,P_Value1,Estadistico1,Valor_Critico1] = lbqtest(datos.new_est,'lags',[5,10,15])
+
+P_Value1=[P_Value1]';
+Estadistico1=[Estadistico1]';
+Valor_Critico1=[Valor_Critico1]';
+
+R1 = {'5 Rezagos';'10 Rezagos'; '15 Rezagos'};
+
+Estadistico_Q1=table(P_Value1,Estadistico1,Valor_Critico1,'RowNames',R1)
+%%
+%-------------------------------------------------------------------------%
+% (Punto_1_a) 
+% Estimen el componente cíclico y justifiquen su estimación con estadísticas y 
+% criterios de información del modelo estimado.
+
+% Estimemos diferentes modelos autoregresivos y guardemos sus criterios de
+% información AIC y BIC para ver cual es el mejor:
+
+AR=5;
+MA=5;
+LL=NaN(AR+2,MA+2);
+NBetas=NaN(AR+2,MA+2);
+
+
+for i=0:AR
+LL(i+2,1)=i;
+NBetas(i+2,1)=i;
+    for j=0:MA   
+LL(1,j+2)=j
+NBetas(1,j+2)=j
+Mdl = arima(i,0,j);
+[EstMdl,~,Logl] = estimate(Mdl,datos.new_est);
+param=i+j+1;
+NBetas(i+2,j+2)=param;
+LL(i+2,j+2)=Logl;
+    end
+end
+
+NBetas(2,2)=1;
+C=size(NBetas,2);
+T=length(datos.new_est)
+AIK=[];
+SIC=[];
+for i=2:C
+   [aic,BIC] = aicbic(LL(2:end,i),NBetas(2:end,i),T) 
+   AIK(:,i-1)=aic
+   SIC(:,i-1)=BIC
+end
+
+CAIK=NBetas;
+CSIC=NBetas;
+
+CAIK(2:end,2:end)=AIK;
+CSIC(2:end,2:end)=SIC;
+
+MinAIK=min(CAIK(2:end,2:end),[],'all');
+MinSIC=min(CSIC(2:end,2:end),[],'all');
+
+[AR_AIC,MA_AIC]=find(CAIK(2:end,2:end)==MinAIK);
+[AR_SIC,MA_SIC]=find(CSIC(2:end,2:end)==MinSIC);
+
+ARMAAIC=[AR_AIC-1 MA_AIC-1];
+ARMASIC=[AR_SIC-1 MA_SIC-1];
+
+
+%%
+%CondVarMdlARCH1 = garch(0,1)
+%ARMASIC.Variance = CondVarMdlARCH1;
+
+MdlSIC1 = arima(ARMASIC(1,1),0,ARMASIC(1,2));
+
+[EstMdlSIC,B,logL3,info] = estimate(MdlSIC1,datos.new_est);
+%-------------------------------------------------------------------------%
+
+%-------------------------------------------------------------------------%
+% (Punto_1_b) 
+% Construyan y grafiquen la serie de residuales. Justifique que se trata de ruido blanco.
+
+[resSIC, varSIC] = infer(EstMdlSIC,datos.new_est);
+
+%%
+%inspeccion grafica:
+N= NaN(11,1);
+datos.resSIC=[NaN;resSIC;N];
+figure (4)
+
+plot(datos.FECHA1, datos.resSIC)
+title('Residuales ISE en Colombia modelo ARIMA(5,1,2)')
+xlabel('Fecha') 
+ylabel('%') 
+datetick('x','mm/yyyy');
+
+figure (5)
+subplot(1,3,1)
+autocorr(resSIC)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF')
+
+subplot(1,3,2)
+parcorr(resSIC)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF*100')
+
+subplot(1,3,3)
+histfit(resSIC)
+ylabel('PDF')
+xlabel('%')
+title('Histograma')
+
+[QSIC,P_ValueSIC,EstadisticoSIC,Valor_CriticoSIC] = lbqtest(resSIC,'lags',[5,10,15])
+
+P_ValueSIC=[P_ValueSIC]';
+EstadisticoSIC=[EstadisticoSIC]';
+Valor_CriticoSIC=[Valor_CriticoSIC]';
+
+Estadistico_Q1=table(P_ValueSIC,EstadisticoSIC,Valor_CriticoSIC,'RowNames',R1)
+%%
+datos.rSIC2=((datos.resSIC).^2);
+
+
+figure (6)
+subplot(2,1,1)
+plot(datos.FECHA1, datos.rSIC2)
+title('Residuales^2 ISE en Colombia modelo ARIMA(5,1,2)')
+xlabel('Fecha') 
+ylabel('%') 
+datetick('x','mm/yyyy');
+
+subplot(2,2,3)
+autocorr(datos.rSIC2)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF')
+
+subplot(2,2,4)
+parcorr(datos.rSIC2)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF')
+
+[QSIC2,P_ValueSIC2,EstadisticoSIC2,Valor_CriticoSIC2] = lbqtest(datos.rSIC2,'lags',[5,10,15])
+
+P_ValueSIC2=[P_ValueSIC2]';
+EstadisticoSIC2=[EstadisticoSIC2]';
+Valor_CriticoSIC2=[Valor_CriticoSIC2]';
+
+Estadistico_QSIC2=table(P_ValueSIC2,EstadisticoSIC2,Valor_CriticoSIC2,'RowNames',R1)
+
+
+%%
+SG2=2;
+EP2=2;
+LL=NaN(SG2+2,EP2+2);
+NBetas=NaN(SG2+2,EP2+2);
+
+for i=0:SG2
+LL(i+2,1)=i;
+NBetas(i+2,1)=i;
+    for j=1:EP2   
+LL(1,j+2)=j
+NBetas(1,j+2)=j
+CondVarMdl = garch(i,j);
+MdlSIC1.Variance = CondVarMdl;
+[EstMdlGARCH,~,rB] = estimate(MdlSIC1,datos.new_est);
+param=i+j+1;
+NBetas(i+2,j+2)=param;
+LL(i+2,j+2)=rB;
+    end
+end
+%%
+
+NBetas(2,2)=1;
+C=size(NBetas,2);
+T=length(datos.new_est((~isnan(datos.new_est))));
+AIK=[];
+SIC=[];
+
+for i=3:C
+   [aic,BIC] = aicbic(LL(2:end,i),NBetas(2:end,i),T) 
+   AIK(:,i-1)=aic
+   SIC(:,i-1)=BIC
+end
+
+%%
+VarMdlGARCH = garch(1,1)
+MdlSIC1.Variance = VarMdlGARCH
+
+[MdlGARCH1,~,logGARCH1]  = estimate(MdlSIC1,datos.new_est);
+
+
+[errorGarch,varianzaGarch] = infer(MdlGARCH1,datos.new_est);
+datos.errorG=[NaN;(errorGarch)./sqrt(varianzaGarch);N];
+datos.errorG2= (datos.errorG).^2;
+
+
+%%
+[QGAR2,P_ValueGAR2,EstadisticoGAR2,Valor_CriticoGAR2] = lbqtest(datos.errorG2,'lags',[5,10,15])
+
+P_ValueGAR2=[P_ValueGAR2]';
+EstadisticoGAR2=[EstadisticoGAR2]';
+Valor_CriticoGAR2=[Valor_CriticoGAR2]';
+
+Estadistico_QGAR2=table(P_ValueGAR2,EstadisticoGAR2,Valor_CriticoGAR2,'RowNames',R1)
+
+figure (7)
+subplot(1,2,1)
+autocorr(datos.errorG2)
+ylabel('ACF')
+xlabel('Rezago')
+title('ACF')
+
+subplot(1,2,2)
+parcorr(datos.errorG2)
+ylabel('PACF')
+xlabel('Rezago')
+title('PACF*100')
+%%
+[h,p] = kstest(datos.errorG)
+
+figure (8)
+cdfplot(datos.errorG)
+hold on
+x_values = linspace(min(datos.errorG),max(datos.errorG));
+plot(x_values,normcdf(x_values,0,1),'r-')
+legend('Empirical CDF','Standard Normal CDF','Location','best')
+hold off
+
+%%
+[pred,VarPred] = forecast(MdlGARCH1,11,'Y0', datos.new_est);
+
+LIC95 = pred - 1.96*sqrt(VarPred);
+HIC95 = pred + 1.96*sqrt(VarPred);
+
+%%
+y_sua=rmmissing(datos.new_est);
+For_sua=[y_sua(204);pred];
+
+LFor=[y_sua(204);LIC95];
+HFor=[y_sua(204);HIC95];
+%%
+figure (9)
+
+plot(datos.FECHA(192:205),datos.est1(192:205),'Color',[.7,.7,.7])
+hold on
+plot(datos.FECHA(205:216),For_sua,'k','LineWidth',2)
+hold on
+plot(datos.FECHA(205:216),LFor,'r','LineWidth',2)
+hold on
+plot(datos.FECHA(205:216),HFor,'r','LineWidth',2)
+ylabel('%')
+xlabel('Fecha')
+legend('Crecimiento ISE', 'Pronóstico Central', 'IC 95%','location','southwest')
+title('Crecimiento ISE')
+%%
+var=[varianzaGarch(204); VarPred];
+
+figure (10)
+
+plot(datos.FECHA(192:205),datos.est1(192:205),'Color',[.7,.7,.7])
+hold on
+plot(datos.FECHA(205:216),For_sua,'k','LineWidth',2)
+hold on
+plot(datos.FECHA(205:216),var,'b','LineWidth',2)
+ylabel('%')
+xlabel('Fecha')
+legend('Crecimiento ISE', 'Pronóstico Central', 'Varianza ISE')
+title('Crecimiento ISE')
+
+%%
+[pred,VarPred] = forecast(MdlGARCH1,11,'Y0', datos.est1);
+
+LIC95 = pred - 1.96*sqrt(VarPred);
+HIC95 = pred + 1.96*sqrt(VarPred);
+
+%%
+y=rmmissing(datos.est1);
+For=[y(204);pred];
+var_1=[varianzaGarch(204); VarPred];
+
+%%
+
+figure (11)
+
+plot(datos.FECHA(192:205),datos.est1(192:205),'Color',[.7,.7,.7])
+hold on
+plot(datos.FECHA(205:216),For,'k','LineWidth',2)
+hold on
+plot(datos.FECHA(205:216),var_1,'b','LineWidth',2)
+ylabel('%')
+xlabel('Fecha')
+legend('Crecimiento ISE', 'Pronóstico Central', 'Varianza ISE')
+title('Crecimiento ISE')
